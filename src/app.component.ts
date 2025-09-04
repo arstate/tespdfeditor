@@ -37,24 +37,46 @@ export class AppComponent {
   textItems = signal<TextItem[]>([]);
   editedTexts = signal<Map<number, Map<number, string>>>(new Map());
 
+  // Promise to track script loading status, ensuring we only load them once.
+  private scriptsLoadedPromise: Promise<void> | null = null;
+
   triggerFileUpload(): void {
     this.fileInputRef.nativeElement.click();
   }
 
-  private waitForPdfJs(timeout = 5000): Promise<void> {
+  private loadScript(url: string): Promise<void> {
     return new Promise((resolve, reject) => {
-      const startTime = Date.now();
-      const check = () => {
-        if (typeof pdfjsLib !== 'undefined' && typeof PDFLib !== 'undefined') {
-          resolve();
-        } else if (Date.now() - startTime > timeout) {
-          reject(new Error('Timed out waiting for PDF libraries to load. Please check your internet connection and refresh.'));
-        } else {
-          setTimeout(check, 100); // Check every 100ms
-        }
-      };
-      check();
+      // Check if script already exists to avoid duplications
+      if (document.querySelector(`script[src="${url}"]`)) {
+        resolve();
+        return;
+      }
+
+      const script = document.createElement('script');
+      script.src = url;
+      script.onload = () => resolve();
+      script.onerror = () => reject(new Error(`Failed to load script: ${url}`));
+      document.body.appendChild(script);
     });
+  }
+
+  private loadPdfLibraries(): Promise<void> {
+    if (!this.scriptsLoadedPromise) {
+      this.scriptsLoadedPromise = Promise.all([
+        this.loadScript('https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.2.67/pdf.min.js'),
+        this.loadScript('https://cdn.jsdelivr.net/npm/pdf-lib@1.17.1/dist/pdf-lib.min.js')
+      ]).then(() => {
+        // After pdf.js is loaded, configure its worker. This is a crucial step.
+        if (typeof pdfjsLib !== 'undefined' && !pdfjsLib.GlobalWorkerOptions.workerSrc) {
+          pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.2.67/pdf.worker.min.js';
+        }
+      }).catch(error => {
+        // If loading fails, reset the promise so we can try again on a subsequent action.
+        this.scriptsLoadedPromise = null;
+        throw error;
+      });
+    }
+    return this.scriptsLoadedPromise;
   }
 
   async onFileSelected(event: Event): Promise<void> {
@@ -72,13 +94,8 @@ export class AppComponent {
     this.isLoading.set(true);
 
     try {
-      // Wait for the PDF libraries to be available on the window object
-      await this.waitForPdfJs();
-
-      // Configure worker lazily, now that we know pdfjsLib is defined.
-      if (!pdfjsLib.GlobalWorkerOptions.workerSrc) {
-        pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.2.67/pdf.worker.min.js';
-      }
+      // Dynamically load scripts and wait for them to be ready.
+      await this.loadPdfLibraries();
       
       const fileBuffer = await file.arrayBuffer();
       this.pdfFileBuffer.set(fileBuffer);
@@ -96,7 +113,7 @@ export class AppComponent {
       }, 0);
     } catch (error) {
       console.error('Error during file processing:', error);
-      alert(`${error}`); // Display the timeout message, or other errors.
+      alert('Failed to load required PDF libraries. Please check your internet connection and try again.');
       this.isLoading.set(false);
     } finally {
       input.value = ''; // Reset file input
@@ -120,7 +137,6 @@ export class AppComponent {
       return;
     }
     
-    // This check is now a safeguard; the logic in onFileSelected should prevent this from failing.
     if (!this.canvasRef) {
       console.error('Render called before canvas was ready.');
       return;
