@@ -1,0 +1,5 @@
+{
+  "name": "PDF Text Editor",
+  "description": "An online tool to edit text in PDF documents. Upload your PDF, click on the text to modify it, and download the updated file. All processing is done in your browser for privacy.",
+  "requestFramePermissions": []
+}
